@@ -13,13 +13,16 @@ else
   exit 1
 fi
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-doris.yaml"
+
 echo "Stopping Doris cluster..."
-$COMPOSE_CMD -f docker-compose-doris.yaml down
+$COMPOSE_CMD -f "$COMPOSE_FILE" down
 
 echo "✅ Doris cluster stopped successfully"
 echo ""
 echo "Other management commands:"
 echo "  Start cluster: ./start-doris.sh"
-echo "  View logs: $COMPOSE_CMD -f docker-compose-doris.yaml logs -f"
-echo "  Check status: $COMPOSE_CMD -f docker-compose-doris.yaml ps"
+echo "  View logs: $COMPOSE_CMD -f $COMPOSE_FILE logs -f"
+echo "  Check status: $COMPOSE_CMD -f $COMPOSE_FILE ps"
 

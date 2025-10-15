@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# Resolve script directory to locate compose file reliably
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-doris.yaml"
+
 # Detect compose command
 COMPOSE_CMD=""
 if command -v docker-compose &> /dev/null; then
@@ -83,15 +87,70 @@ if [ -n "$DB_NAME" ]; then
   MYSQL_ARGS="$MYSQL_ARGS -D $DB_NAME"
 fi
 
-if [ "$MODE" = "interactive" ]; then
-  echo "[INFO] Interactive MySQL shell"
-  $COMPOSE_CMD -f docker-compose-doris.yaml exec -T $FE_SVC mysql $MYSQL_ARGS
-elif [ "$MODE" = "file" ]; then
-  $COMPOSE_CMD -f docker-compose-doris.yaml exec -T $FE_SVC mysql $MYSQL_ARGS < "$SQL_FILE"
-else
-  if [ -z "$SQL_TEXT" ]; then
-    echo "Error: Please provide SQL text"
+# Try to detect FE container for readiness checks
+find_fe_container() {
+  docker ps --filter label=com.docker.compose.service=fe --format '{{.Names}}' | head -n1
+}
+
+wait_mysql_ready() {
+  local fe_container
+  fe_container=$(find_fe_container)
+  if [ -z "$fe_container" ]; then
+    return 0
+  fi
+
+  local attempts=60
+  local i=1
+  while [ $i -le $attempts ]; do
+    if docker exec -i "$fe_container" sh -lc "mysql -uroot -P9030 -h127.0.0.1 -e 'select 1'" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i+1))
+  done
+  echo "[WARN] FE MySQL port 9030 not ready after ${attempts}s; proceeding anyway"
+}
+
+# Wait (best-effort) for FE readiness
+wait_mysql_ready
+
+# Try compose exec first, then fallback to docker exec if service not found
+compose_exec_mysql_cmd() {
+  if [ "$1" = "interactive" ]; then
+    $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T $FE_SVC mysql $MYSQL_ARGS
+  elif [ "$1" = "file" ]; then
+    $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T $FE_SVC mysql $MYSQL_ARGS < "$SQL_FILE"
+  else
+    $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T $FE_SVC mysql $MYSQL_ARGS -e "$SQL_TEXT"
+  fi
+}
+
+docker_exec_mysql_cmd() {
+  # Prefer containers labeled as compose service=fe; fallback by name heuristic
+  FE_CONTAINER=$(docker ps --filter label=com.docker.compose.service=fe --format '{{.Names}}' | head -n1)
+  if [ -z "$FE_CONTAINER" ]; then
+    FE_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^doris-fe-\d+$' | head -n1 || true)
+  fi
+  if [ -z "$FE_CONTAINER" ]; then
+    echo "Error: FE container not found for docker exec fallback"
     exit 1
   fi
-  $COMPOSE_CMD -f docker-compose-doris.yaml exec -T $FE_SVC mysql $MYSQL_ARGS -e "$SQL_TEXT"
+
+  if [ "$1" = "interactive" ]; then
+    docker exec -it "$FE_CONTAINER" mysql $MYSQL_ARGS
+  elif [ "$1" = "file" ]; then
+    docker exec -i "$FE_CONTAINER" mysql $MYSQL_ARGS < "$SQL_FILE"
+  else
+    docker exec -i "$FE_CONTAINER" sh -lc "mysql $MYSQL_ARGS -e \"$SQL_TEXT\""
+  fi
+}
+
+MODE_TO_RUN="$MODE"
+set +e
+compose_exec_mysql_cmd "$MODE_TO_RUN"
+STATUS=$?
+set -e
+if [ $STATUS -ne 0 ]; then
+  echo "[WARN] compose exec failed (service may be under a different project). Falling back to docker exec..."
+  docker_exec_mysql_cmd "$MODE_TO_RUN"
 fi

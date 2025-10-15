@@ -13,6 +13,10 @@ else
   exit 1
 fi
 
+# Resolve compose file path relative to script directory
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-doris.yaml"
+
 # Display usage
 show_usage() {
     echo "Doris Cluster Management Tool"
@@ -62,29 +66,29 @@ case "$1" in
         ;;
     stop)
         echo "🛑 Stopping Doris cluster..."
-        $COMPOSE_CMD -f docker-compose-doris.yaml down
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down
         echo "✅ Doris cluster stopped"
         ;;
     restart)
         echo "🔄 Restarting Doris cluster..."
-        $COMPOSE_CMD -f docker-compose-doris.yaml down
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down
         sleep 2
         ./start-doris.sh
         ;;
     status)
         echo "📊 Doris cluster status:"
-        $COMPOSE_CMD -f docker-compose-doris.yaml ps
+        $COMPOSE_CMD -f "$COMPOSE_FILE" ps
         echo ""
         echo "Container details:"
-        docker ps --filter "name=dash-doris" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        docker ps --filter "label=com.docker.compose.project" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
         ;;
     logs)
         if [ "$2" = "-f" ]; then
             echo "📋 Following Doris logs (Ctrl+C to exit)..."
-            $COMPOSE_CMD -f docker-compose-doris.yaml logs -f
+            $COMPOSE_CMD -f "$COMPOSE_FILE" logs -f
         else
             echo "📋 Doris logs (last 50 lines):"
-            $COMPOSE_CMD -f docker-compose-doris.yaml logs --tail=50
+            $COMPOSE_CMD -f "$COMPOSE_FILE" logs --tail=50
         fi
         ;;
     sql)
@@ -103,7 +107,7 @@ case "$1" in
         read -p "Are you sure? (yes/no): " confirm
         if [ "$confirm" = "yes" ]; then
             echo "🧹 Cleaning up Doris cluster and data..."
-            $COMPOSE_CMD -f docker-compose-doris.yaml down -v
+            $COMPOSE_CMD -f "$COMPOSE_FILE" down -v
             echo "✅ Cleanup completed"
         else
             echo "❌ Cleanup cancelled"
